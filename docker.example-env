@@ -1,0 +1,38 @@
+# Secrets
+#MONGO_CONNECTION=mongodb://localhost:27017/day
+MONGO_CONNECTION=mongodb://localhost:27017/nightscout
+API_SECRET=secret
+BASE_URL=https://example.trixing.net
+CUSTOM_TITLE=Trixing Nightscout
+BRIDGE_USER_NAME=dexcom-user-name
+BRIDGE_PASSWORD=dexcom-password
+NODE_ENV=development
+DEBUG_MINIFY=false
+
+# Non-Secrets, same between production and testing.
+AUTH_DEFAULT_ROLES=readable
+DISPLAY_UNITS=mg/dl
+DEBUG_MINIFY=false
+HOSTNAME=0.0.0.0
+PORT=1337
+ENABLE=bridge careportal errorcodes upbat devicestatus iob cob bwp basal pump loop cage sage iage food
+SHOW_PLUGINS=bridge careportal errorcodes upbat devicestatus iob cob bwp basal pump loop cage sage iage food
+SHOW_FORECAST=ar2 loop
+LOOP_ENABLE_ALERTS=true
+DEVICESTATUS_ADVANCED=true
+PUMP_ENABLE_ALERTS=true
+PUMP_WARN_BATT_V=1.10
+PUMP_URGENT_BATT_V=1.00
+BRIDGE_FIRST_FETCH_COUNT=240
+TIME_FORMAT=24
+THEME=colors
+EDIT_MODE=off
+BASAL_RENDER=default
+TZ=Europe/Berlin
+BG_HIGH=300
+BG_LOW=60
+BG_TARGET_TOP=200
+BG_TARGET_BOTTOM=70
+ALARM_HIGH=off
+ALARM_LOW=off
+ALARM_TIMEAGO_WARN=off

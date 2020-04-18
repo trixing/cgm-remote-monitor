@@ -1,0 +1,1547 @@
+<html>
+<head>
+  <!-- Plotly.js -->
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <title>BZ Tagebuch</title>
+  <meta charset="UTF-8">
+</head>
+
+<style>
+.treat td {
+  margin: 5px 5px 5px 5px;
+}
+td, th {
+  font-size: 0.6em;
+  vertical-align: top;
+}
+.treat tr {
+  margin-top: 5px;
+  border: solid 1px black;
+}
+.graph {
+  width: 95%;
+  height: 600px;
+}
+.graphstats {
+  width: 95%;
+  height: 500px;
+}
+div.result {
+  width: 95%;
+  border: 1px solid #999;
+  height: 150px;
+  margin-top: 10px;
+  color: #bbb;
+}
+tr.diff {background-color: #fcc};
+td.sgv { width: 40px; text-align: center; }
+td.what { width: 150px; }
+
+td span.hl { font-weight: bold; }
+td span.header { font-weight: bold; }
+
+th { text-align: left; }
+.footnote {margin-top: 20px; font-size: 0.7em; margin-bottom: 10px;}
+.lo { font-weight: bold; color: red; }
+.hi { font-weight: bold; color: orange; }
+@media print {
+    footer {page-break-after: always;}
+    #nav {display: none;}
+    div.graphstats {page-break-inside: avoid;}
+}
+div.table {
+  column-count: 2;
+  column-gap: 10px;
+  column-rule: 4px outset #ddd;
+  width: 95%;
+}
+div.table table {
+  border-collapse: collapse;
+/*
+  border: none;
+*/
+}
+div.table tr { border: none; }
+div.table tr.big { font-size: 1.3em; }
+div.summary {
+  width: 95%;
+  margin-bottom: 10px;
+}
+div.summary table {
+  width: 100%;
+  border-collapse: collapse;
+}
+div.summary td {
+  font-size: 0.8em;
+  width: 3%;
+  padding-left: 3px;
+}
+div.summary tr:nth-child(even) {
+  /*background-color: #ddd;*/
+}
+div.summary col:nth-child(even) {
+  background-color: #ddd;
+}
+body {
+  font-family: sans-serif;
+}
+</style>
+<body>
+
+<div id="nav"></div>
+
+<script>
+
+var NSURL = "https://nightscout.example.com";
+var LOW = 70;
+var HIGH = 250;
+
+var global_stats = [];
+
+function two(num) {
+  if (num >= 10) {
+    return num;
+  } else {
+    return '0' + num;
+  }
+}
+
+function formatDay(day) {
+  return two(day.getDate()) + "." + two(day.getMonth() + 1) + "." + day.getFullYear();
+}
+
+function getParameterByName(name, url) {
+  if (!url) {
+    url = window.location.href;
+  }
+  name = name.replace(/[\[\]]/g, "\\$&");
+  var regex = new RegExp("[?&]" + name + "(=([^&#]*)|&|#|$)"),
+  results = regex.exec(url);
+  if (!results) return null;
+  if (!results[2]) return '';
+  return decodeURIComponent(results[2].replace(/\+/g, " "));
+}
+
+function sumStats(dayDiv, stats) {
+  var result = {};
+  for(var i in stats) {
+     for(var k in stats[i]) {
+       if (k == 'intervals') { continue; }
+       if (result[k] == null) {
+         result[k] = stats[i][k];
+       } else {
+         result[k] += stats[i][k];
+       }
+     }
+  }
+  result.sgv = result.sgv_total / Math.max(result.sgv_i, 1);
+  console.log('sumStats', result);
+
+  var analysis = [
+    [stats.length, ' Tage'], 
+    [result.mbg_count, ' blutige Messungen'],
+    [result.mbg_lows65, ' Hypos blutig gemessen'],
+    [result.sgv_lows65, ' Hypos vom Dexcom gemessen und behandelt'],
+    [result.sgv, ' mg/dl Durchschnittsblutzucker'],
+    [result.insulin, ' U Insulin'], 
+    [result.carbs, ' g Kohlenhydrate'], 
+    [(result.delta_carbs > 20) ? result.delta_carbs : 0, ' g vergessene Kohlenhydrate'], 
+  ].filter(function(r) { return r[0] > 0; }).map(function(r) {
+     return '<li>' + Math.round(r[0]) + ' ' + r[1] + ' (' + Math.round(r[0] / stats.length * 10)/10 + ' / Tag)';
+  });
+
+  var sumDiv = document.createElement('div');
+  sumDiv.className = "graphstats";
+  dayDiv.appendChild(sumDiv);
+ 
+  sumDiv.innerHTML = 'Zusammenfassung<br><ul>' + analysis.join('') + '</ul>';
+
+  return result;
+}
+
+function graphDayStats(dayDiv, stats, propertyName, color, title, ytitle) {
+  var graphDiv = document.createElement('div');
+  var footer = document.createElement('footer');
+  graphDiv.className = "graphstats";
+  dayDiv.appendChild(graphDiv);
+  //dayDiv.appendChild(footer);
+
+  var xticks = stats.map(function(r) { return new Date(r.day); });
+  var y = stats.map(function(r) {return r[propertyName]; });
+  var trace = {
+    x: xticks,
+    y: y,
+    type: 'bar',
+    marker: {color: color},
+  };
+  console.log(title, trace);
+
+
+  var shapes = [];
+ 
+  var layout = {
+    title: title,
+    showlegend: false,
+    yaxis: {
+      title: ytitle,
+    },
+    xaxis: {
+      tickvals: xticks,
+      tickformat: '%a, %d.%m.',
+    //  range: [-0.5, 23.5],
+    },
+    shapes: shapes,
+    margin: {
+     //t: 50,
+     //b: 30,
+     r: 20,
+     l: 40,
+    },
+  };
+  Plotly.plot(graphDiv, [trace], layout, {showLink: false, staticPlot: true});
+}
+
+
+function generateStatTrace(stats, propertyName, color) {
+  var traces = [];
+  for(var i in stats[0].intervals) {
+    var y = stats.map(function(r) {return r.intervals[i][propertyName]; });
+    if ( (propertyName == 'sgv') ) {
+       y = y.filter(function(v) { return v > 0; });
+    }
+    var trace = {
+      x: i,
+      y: y,
+      type: 'box',
+      marker: {color: color},
+      name: i,
+      boxmean: true,
+      boxpoints: false  // no outliers
+    };
+    traces.push(trace);
+  };
+  return traces;
+}
+
+function graphStats(dayDiv, stats, propertyName, color, title, ytitle) {
+  var graphDiv = document.createElement('div');
+  var footer = document.createElement('footer');
+  graphDiv.className = "graphstats";
+  dayDiv.appendChild(graphDiv);
+  //dayDiv.appendChild(footer);
+
+  var xticks = stats[0].intervals.map(function(r) { return r.start; });
+
+  var shapes = [];
+  if (propertyName == 'sgv') {
+    shapes.push({
+       type: 'rect',
+       x0: -0.5,
+       x1: 24,
+       y0: LOW,
+       y1: HIGH,
+       line: { color: 'rgba(128, 0, 0, 0)' },
+       fillcolor: 'rgba(128, 0, 0, 0.2)',
+    });
+    shapes.push({
+       type: 'line',
+       x0: -0.5,
+       x1: 24,
+       y0: 120,
+       y1: 120,
+       line: { color: 'rgba(128, 0, 0, 0.7)' },
+    });
+  }
+  
+  var layout = {
+    title: title,
+    showlegend: false,
+    yaxis: {
+      title: ytitle,
+    },
+    xaxis: {
+      tickvals: xticks,
+      range: [-0.5, 23.5],
+    },
+    shapes: shapes,
+    margin: {
+     t: 50,
+     b: 30,
+     r: 20,
+     l: 40,
+    },
+  };
+  Plotly.plot(graphDiv, generateStatTrace(stats, propertyName, color), layout, {showLink: false, staticPlot: true});
+}
+function printStats(stats, statsStart, statsEnd) {
+  var titleDate = ' (' + formatDay(statsStart) + ' - ' + formatDay(statsEnd) + ')';
+  var dayDiv = document.createElement('div');
+  dayDiv.className = "day";
+  var bodyDiv = document.getElementsByTagName('body')[0];
+  bodyDiv.appendChild(dayDiv);
+  graphStats(dayDiv, stats, 'insulin', 'orange', 'Insulin' + titleDate, 'U');
+  graphStats(dayDiv, stats, 'basal_delta', 'blue', 'Basal Abweichung' + titleDate, 'U');
+  graphStats(dayDiv, stats, 'sgv', 'black', 'Blutzucker' + titleDate, 'mg/dl');
+  graphStats(dayDiv, stats, 'carbs', 'green', 'Kohlenhydrate' + titleDate, 'g');
+  graphStats(dayDiv, stats, 'steps', 'red', 'Schritte' + titleDate, 'Anzahl');
+
+  graphStats(dayDiv, stats, 'delta', 'orange', 'Insulin Abweichung von Basalmenge' + titleDate, 'U');
+  graphStats(dayDiv, stats, 'delta_carbs', 'green', 'KH Abweichung' + titleDate, 'g');
+  graphStats(dayDiv, stats, 'sgv_lows65', 'red', 'Dexcom Blutzucker Hypo (&lt; 65)' + titleDate, '#');
+  graphStats(dayDiv, stats, 'mbg_lows65', 'red', 'Blutzucker blutig mit Hypo (&lt; 65)' + titleDate, '#');
+
+  graphDayStats(dayDiv, stats, 'insulin', 'orange', 'Insulin Tagesmenge' + titleDate, 'U');
+  graphDayStats(dayDiv, stats, 'sgv', 'black', 'Blutzucker Durchschnitt' + titleDate, 'mg/dl');
+  graphDayStats(dayDiv, stats, 'carbs', 'green', 'Kohlenhydrate Tagesmenge' + titleDate, 'g');
+
+  graphDayStats(dayDiv, stats, 'sgv_lows65', 'red', 'Dexcom Blutzucker Stunden mit Hypo (&lt; 65)/Tag' + titleDate, '#');
+  graphDayStats(dayDiv, stats, 'mbg_lows65', 'red', 'Blutzucker blutig mit Hypo (&lt; 65)/Tag' + titleDate, '#');
+
+  sumStats(dayDiv, stats);
+}
+
+function printDay(day, options) {
+
+var template=`
+  <div class="graph"><!-- Plotly chart will be drawn inside this DIV --></div>
+  <div class="summary">
+  </div>
+  <div class="table">
+  <table class="treat">
+  <tr>
+    <th>Zeit</th>
+    <th>BZ</th>
+    <th>Ereignis</th>
+    <th>Einheit</th>
+  </tr>
+  </table>
+  </div>
+  <div class="result">
+    <!-- Handwritten result -->
+    Handwritten description...
+  </div>
+  <div class="footnote">
+    <div>* Die Abweichung zu den theoretischen Kohlenhydrate basierend auf dem Insulin:KH Verhaeltnis. Positiv bedeutet KH ohne Eintrag. Negativ zu viele KH.</div>
+    <div>** COB: Carbs-On-Board, IOB: Insulin-On-Board - die rechnerisch verbleibene Menge Kohlenhydrate, bzw. Insulin die der Koerper zu diesem Zeitpunkt noch nicht verarbeitet hat.</div>
+    <div>*** Gestrichelte Linie ist die programmierte Basalrate</div>
+  </div>
+  <footer></footer>
+`;
+var dayDiv = document.createElement('div');
+dayDiv.className = "day";
+dayDiv.innerHTML = template;
+var bodyDiv = document.getElementsByTagName('body')[0];
+bodyDiv.appendChild(dayDiv);
+var graphDiv = dayDiv.getElementsByClassName('graph')[0];
+var treatTable = dayDiv.getElementsByClassName('treat')[0];
+var summaryDiv = dayDiv.getElementsByClassName('summary')[0];
+var resultDiv = dayDiv.getElementsByClassName('result')[0];
+
+//Plotly.newPlot('myDiv', data);
+var offset = 0;
+var startTime = new Date(day.getTime() - offset * 60 * 60 * 1000);
+var endTime = new Date(startTime.getTime() + 86400 * 1000);
+var start = startTime.toISOString();
+var end = endTime.toISOString();
+console.log("From", start, "to", end);
+
+function getBatteryChange(devicestatus) {
+  var rows = devicestatus.filter(function(d) { return d['pump'] && d['pump']['battery']; }
+    ).map(function(d) { return [new Date(d['created_at']), d['pump']['battery']['percent']]; });
+  rows.sort(sortfn);
+  console.log('battery', rows);
+  for(var i = 0; i < rows.length - 1; i+=1) {
+    if (rows[i][1] <=25 && rows[i+1][1] > 75) {
+      return [rows[i][0], rows[i][1], rows[i+1][1]];
+    }
+  }
+  return null;
+}
+
+function decimal(value) {
+  return Math.round(value * 10) / 10;
+}
+
+function addTable(entries, treatments, devicestatus, profileStr, profileDefault, changes) {
+  var reservoir = devicestatus.filter(function(d) { return d['pump'] != null; }
+    ).map(function(d) { return [new Date(d['created_at']), d['pump']['reservoir']]; });
+  reservoir.sort(function(a,b) {return a[0] - b[0];});
+  var reservoirChange = null;
+  if (reservoir.length > 1) {
+    for(var i = 0; i < reservoir.length - 1; i+=1) {
+      if (Math.abs(reservoir[i][1] - reservoir[i+1][1]) > 20) {
+        reservoirChange = [reservoir[i][0], reservoir[i][1], reservoir[i+1][1]];
+        break;
+      }
+    }
+  }
+
+  var batteryChange = getBatteryChange(devicestatus);
+  var hasBatteryChange = batteryChange != null;
+
+  var rows = treatments;
+  rows.reverse();
+  function addRow(time, what, value, mbg, tag) {
+    var timeStr = '';
+    if (time) {
+      timeStr = two(time.getHours()) + ':' + two(time.getMinutes());
+    }
+    var str =  '<td class="time">' + timeStr + '</td>';
+    var color = 'black';
+    var sgv = '';
+    if (time) {
+      sgv = entries.filter(function(e) { return Math.abs(time - e[0]) < 15 * 60 * 1000 && e[1] });
+    }
+    var diff = false;
+    if (sgv.length > 0) {
+      //console.log(sgv[0]);
+      sgv = sgv[0][1];
+      sgv = parseInt(sgv);
+      if (sgv < LOW) {
+        color = 'lo';
+      }
+      if (sgv > HIGH) {
+        color = 'hi';
+      }
+      if (mbg && (Math.abs(mbg - sgv)/mbg) > 0.10) {
+        diff = true;
+      }
+      str = str + '<td class="sgv ' + color + '">' + sgv + '</td>'
+    } else {
+      str = str + '<td class="sgv">-</td>'
+    }
+    str = str + '<td class="what">' + what + '</td>'
+    str = str + '<td class="value">' + value +'</td>';
+    var d = document.createElement('tr');
+    if (tag != null) {
+      d.className = tag;
+    }
+    d.innerHTML = str;
+    if (diff) {
+      d.className = 'diff';
+    }
+    treatTable.appendChild(d);
+  }
+  function addReservoir() {
+      addRow(reservoirChange[0], 'Reservoirwechsel', 'Insulin alt ' + reservoirChange[1] + ' neu ' + reservoirChange[2]);
+  }
+  function addBattery() {
+      addRow(batteryChange[0], 'Batteriewechsel', 'Alt ' + batteryChange[1] + '%, Neu ' + batteryChange[2] + '%');
+  }
+
+  function days(d) {
+    return Math.round((startTime - d) / 86400 / 100) / 10;
+  }
+
+  var remaining = '?';
+  if (reservoir[0] && reservoir[0][1]) {
+    remaining = reservoir[0][1];
+  }
+  addRow(0, 'Historie', 'Insulin ' + days(changes.insulin) + ' Tage (Rest ' + decimal(remaining) + ' U), Katheter ' + days(changes.site) + ' Tage, Sensor ' + days(changes.sensor) + ' Tage');
+
+  var basal_data = getBasalTrace(profileDefault);
+
+  var totals = {
+    meals: 0,
+    bolusNumber: 0,
+  };
+  var lastMealDate = -60;
+  var lastValue = null;
+  var mbg = null;
+  rows.map(function(row) {
+    var et = row['eventType'];
+    var time = new Date(row['created_at']);
+    var hour = time.getHours();
+    //var timeStr = time.toTimeString();
+    var what = '';
+    var value = '';
+    var tag = '';
+    if (et == 'Correction Bolus') {
+      what = 'Bolus';
+      value = row['insulin'] + ' U';
+      totals.bolusNumber += 1;
+      if (row['insulin'] < 0.3) {
+        // don't show small bolus'
+        return
+      }
+    } else if (et == 'Meal Bolus') {
+      what = 'Kohlenhydrate';
+      value = row['carbs'] + ' Gramm '/* + row['notes']*/;
+      if (row['carbs'] == null) {
+        return;
+      }
+      var mealObj = null;
+      try {
+        if (row['notes']) {
+          mealObj = JSON.parse(row['notes']);
+        }
+      } catch(err) {
+        console.log('json error', err, row['notes']); 
+      }
+      if (mealObj) {
+        var bites = [];
+        for(var i in mealObj) {
+          var pick = mealObj[i];
+          var portion = pick.ratio * pick.item.portionSize;
+          var carbs = portion * pick.item.carbRatio;
+          if (pick.item.title == 'QuickCarbEntry') {
+          } else if (pick.item.title == 'Custom') {
+          } else {
+            bites.push(pick.item.title)
+          }
+        }
+        if (bites.length > 0) {
+          value += ': ' + bites.join(',');
+        }
+      }
+       
+      if (((time - lastMealDate)/1000/60) > 30) {
+        totals.meals += 1;
+      } 
+      lastMealDate = time;
+      tag = 'meal';
+    } else if (et.startsWith('Debug.')) {
+      return
+    } else if (et == 'Note') {
+      what = 'Notiz';
+      value = row['notes'];
+      if (value.startsWith("DEBUG")) {
+        return
+      } else if (value.startsWith("INTERNAL")) {
+        return
+      } else if (value.startsWith("Log.")) {
+        return
+      } else if (value.startsWith("EVENT: App Launch:")) {
+        return
+      } else if (value.startsWith("EVENT: Pump reservoir rewind")) {
+        // covered by insulinchange
+        return
+      } else if (value.startsWith("EVENT: Pump battery replacement")) {
+        value = 'Batterie der Pumpe gewechselt'
+      } else if (value.startsWith("EVENT: Bolus")) {
+        return
+      } else if (value.startsWith("EVENT: App Launch")) {
+        return
+      } else if (value.startsWith("EVENT: Status")) {
+        return
+      } else if (value.startsWith("EVENT: Settings")) {
+        return
+      } else if (value.startsWith("EVENT: Insulin sensitivity change")) {
+        value = 'ISF angepasst';
+      } else if (value.startsWith("EVENT: Basal rate change")) {
+        value = 'Basalrate angepasst';
+        if (value == lastValue) {
+          return;
+        }
+      } else if (value.startsWith("EVENT: Maximum basal rate change")) {
+        value = 'Maximale Basalrate angepasst';
+      } else if (value.startsWith("EVENT: Minimum basal rate change")) {
+        value = 'Minimale Basalrate angepasst';
+      } else if (value.startsWith("EVENT: Glucose target range change")) {
+        value = 'BZ Ziel angepasst';
+      } else if (value.startsWith("EVENT: Carb ratio change")) {
+        value = 'KH Faktor angepasst';
+      } else if (value.startsWith("EVENT: Pump battery")) {
+        if (hasBatteryChange) {
+          return
+        }
+      } else if (value.startsWith("syncPumpTime error")) {
+        return
+      } else if (value.startsWith("Bolus: ")) {
+        return
+      } else if (value.startsWith("Bolus ")) {
+        return
+      } else if (value.startsWith("AUTO")) {
+        return
+      } else if (value.startsWith("sendGlucoseFutureLowNotifications")) {
+        return
+      } else if (value.startsWith("Add FoodPick(")) {
+        return
+      } else if (value.startsWith("Remove FoodPick(")) {
+        return
+      } else if (value == "Enabled Pump Detached Mode") {
+        value = "Pumpe abgekoppelt";
+      } else if (value == "Disabled Pump Detached Mode") {
+        value = "Pumpe wieder angeschlossen";
+      } else {
+        value = value.replace('fake', 'vergessene Kohlenhydrate nachgeholt');
+        value = value.replace('Fake', 'Vergessene Kohlenhydrate nachgeholt');
+        value = value.replace('Note: ', '');
+        tag = 'big';
+      }
+      if (value.length > 150) {
+        value = value.substring(0, 146) + ' ...';
+      }
+    } else if (et == 'Temp Basal') {
+      what = 'Temp Basal';
+      value = row['duration'] + ' ' + row['absolute'];
+      return
+    } else if (et == 'Exercise') {
+      return
+    } else if (et == 'Site Change') {
+      what = 'Katheterwechsel';
+      value = '';
+      tag = 'big';
+    } else if (et == 'Insulin Cartridge Change') {
+      what = 'Reservoirwechsel';
+      value = '';
+      tag = 'big';
+    } else if (et == 'Insulin Change') {
+      what = 'Reservoirwechsel';
+      value = '';
+      tag = 'big';
+    } else if (et == 'Sensor Change') {
+      what = 'CGM Eingesetzt';
+      value = '';
+      tag = 'big';
+    } else if (et == 'Sensor Start') {
+      what = 'CGM Neustart';
+      value = '';
+      tag = 'big';
+    } else if (et == 'BG Check') {
+      what = 'BZ Messung';
+      value = row['glucose'] + ' ' + row['units'];
+      mbg = row['glucose'];
+    } else {
+      what = et;
+      value = row;
+      //return;
+    }
+    addRow(time, what, value, mbg, tag);
+    lastValue = value;
+    mbg = null;
+    if (reservoirChange && reservoirChange[0] < time) {
+      addReservoir();
+      reservoirChange = null;
+    }
+    if (batteryChange && batteryChange[0] < time) {
+      addBattery();
+      batteryChange = null;
+    }
+  });
+
+  if (reservoirChange) {
+    addReservoir();
+  }
+  if (batteryChange) {
+    addBattery();
+  }
+  addRow(null, '<b>Profil</b>', profileStr);
+  // console.log('Totals', totals);
+  return totals
+}
+
+function parseProfiles(start, end, profile) {
+  console.log('Profiles', start, end, profile);
+  
+  var lastP = profile[0];
+  for(i in profile) {
+    var p = profile[i];
+    var startDate = p.startDate; // new Date(p.startDate);
+    // console.log(startDate, start, end);
+    if ((startDate < start) && (startDate < end)) {
+      return p;
+    }
+    lastP = p;
+  }
+  return lastP;
+}
+
+function getBasalNormalTotal(basal_data) {
+  var d = basal_data;
+  var total = 0;
+  for(var i in d.x) {
+    //console.log(i, d.x[i], d.x[i*1+1]);
+    if (!d.x[i*1+1]) {
+      break;
+    }
+    total += (d.x[i*1+1] - d.x[i])*d.y[i];
+  }
+  return total;
+}
+
+function getBasalTrace(profile) {
+  var t = profile.basal.map(function(e) {
+    return e['timeAsSeconds'] / 3600;
+  });
+  t.push(24);
+  var rate = profile.basal.map(function(e) {
+    return 1 * e['value'];
+  });
+  rate.push(rate[rate.length-1]);
+  return {x: t, y: rate};
+}
+
+function rateAtDate(basal_data, hour) {
+  for(var i in basal_data.x) {
+     if (basal_data.x[i] > hour) {
+       return basal_data.y[i - 1];
+     }
+  }
+  return basal_data.y[basal_data.y.length - 1];
+}
+
+function getProfileStr(profile) {
+  var s = "";
+  var basalStr = profile.basal.map(function(e) {
+    return e['time'] + ' ' + e['value'] + ' U/h';
+  }).join(', ');
+  var carbStr = profile.carbratio.map(function(e) {
+    return e['time'] + ' ' + e['value'] + ' g/U';
+  }).join(', ');
+  var isfStr = profile.sens.map(function(e) {
+    return e['time'] + ' ' + e['value'] + ' mg/dl/U';
+  }).join(', ');
+
+  var targets = [];
+  for(var i in profile.target_low) {
+    var l = profile.target_low[i];
+    targets.push(l['time'] + ' ' + l['value'] + '-' + profile.target_high[i]['value']);
+  }
+  var targetStr = targets.join(', ');
+
+  return 'Basal: ' + basalStr + '<br>KH: ' + carbStr + '<br>ISF: ' + isfStr + '<br>BZ Ziel: ' + targetStr;
+}
+
+function hours(d) {
+   return d.getHours() + d.getMinutes()/60 + d.getSeconds()/3600;
+}
+
+function sortfn(a, b) {
+  return a[0] - b[0];
+}
+
+function getDeviceStatusTrace(rows, field, x, y, color) {
+  var rows = rows.filter(function(d) { return d['loop'] != null && d['loop'][field] != null; }
+    ).map(function(d) { return [new Date(d['loop'][field]['timestamp']), d['loop'][field][field]]; });
+  rows.sort(sortfn);
+  var trace = {
+    name: field,
+    type: 'scatter',
+    mode: 'lines',
+    fill: 'tozeroy',
+    x: rows.map(function(e){return hours(e[0]);}),
+    y: rows.map(function(e){return e[1];}),
+    line: { width: 1, color: color, shape: 'hv'},
+    marker: { size: 0 },
+    xaxis: x,
+    yaxis: y,
+  };
+  return trace
+}
+
+function parseChanges(changes) {
+  var result = {site: null, insulin: null, sensor: null};
+  for(var i in changes) {
+    var row = changes[i];
+    var et = row['eventType'];
+    var d = new Date(row['created_at']);
+    if (et == 'Site Change' && result.site == null) {
+      result.site = d;
+    }
+    if (et == 'Insulin Change' && result.insulin == null) {
+      result.insulin = d;
+    }
+    if (et == 'Sensor Change' && result.sensor == null) {
+      result.sensor = d;
+    }
+    //console.log(et, d);
+  }
+  return result;
+}
+
+function normalizeBasalDay(basal, basal_data, interval) {
+   var result = [];
+   var basal_start = 0;
+   var i = 0;
+   if (!interval) {
+     interval = 0.25
+   };
+   // console.log('basal_data', basal_data);
+   while (basal_start < 24) {
+        var normal_rate = rateAtDate(basal_data, basal_start);
+        var basal_end = basal_start + interval;
+        var total_diff = 0;
+        // console.log(basal_start, normal_rate);
+        while(i < basal.length) {
+          var entry = basal[i];
+          var entry_start = hours(entry[0]);
+          if (entry_start >= basal_end) {
+            break;
+          }
+
+          var entry_next = basal[i+1];
+          var entry_next_start = 24;
+          if (entry_next) {
+            entry_next_start = hours(entry_next[0]);
+          }
+
+          var duration = 1 * entry[1] / 60;
+          var rate = 1 * entry[2];
+
+          // console.log('  ', entry_start, duration, rate);
+
+          var entry_end = Math.min(basal_end, Math.min(entry_next_start, entry_start + duration));
+          duration = entry_end - Math.max(basal_start, entry_start);
+
+          var diff = duration * (rate - normal_rate);
+          total_diff += diff;
+          // console.log('  >', entry_end, duration, diff);
+          if (entry_end >= basal_end) {
+            break;
+          }
+          i = i + 1;
+        }
+
+        result.push([basal_start, interval, normal_rate + (total_diff / interval), normal_rate]);
+        basal_start = basal_end;
+   }
+   result.push([basal_end, 0, normal_rate, normal_rate]);
+   // console.log('normalizeBasalDay', result);
+   return result;
+}
+
+function normalizeTreatments(profileDefault, basal_day, bolus, carbs, entries, sports, manualbg) {
+   var result = {
+     intervals: [],
+     mbg_count: 0,
+     mbg_lows65: 0,
+     sgv: 0,
+     sgv_i: 0,
+     sgv_total: 0,
+     sgv_lows: 0,
+     sgv_highs: 0,
+     sgv_lows65: 0,
+     insulin: 0,
+     basal: 0,
+     basal_profile: 0,
+     bolus: 0,
+     carbs: 0,
+     delta: 0,
+     delta_carbs: 0,
+     steps: 0
+   }
+   var bolus_i = 0;
+   var carbs_i = 0;
+   var entries_i = 0;
+   var sports_i = 0;
+   var mbg_i = 0;
+
+   var low65_flag = 0;
+   var low_flag = 0;
+
+   // TODO, look at time of day
+   var carbratio = profileDefault.carbratio[0]['value'];
+   var isf = profileDefault.sens[0]['value'];
+
+   for(var i in basal_day) {
+      var entry = basal_day[i];
+      var interval_start = entry[0];
+      var interval = entry[1];
+      var interval_end = interval_start + interval;
+      
+      var total_insulin = entry[2] * interval;
+      var basal_profile = entry[3] * interval;
+      var basal = entry[2] * interval;
+      var basal_delta = basal - basal_profile;
+      var total_bolus = 0;
+      var total_carbs = 0;
+      var total_sports = 0;
+      var total_entries = 0;
+      var entries_flags = '';
+      var entries_count = 0;
+      var mbg_count = 0;
+      var mbg_lows65 = 0;
+      
+      while(bolus_i < bolus.length) {
+         var bolus_entry = bolus[bolus_i];
+         var bolus_hours = hours(bolus_entry[0]);
+         if (bolus_hours < interval_end) {
+           total_bolus += 1 * bolus_entry[1];
+           total_insulin += 1 * bolus_entry[1];
+         } else {
+           break;
+         }
+         bolus_i += 1;
+      }
+
+      while(carbs_i < carbs.length) {
+         var carb_entry = carbs[carbs_i];
+         var carb_hours = hours(carb_entry[0]);
+         if (carb_hours < interval_end) {
+           total_carbs += 1 * carb_entry[1];
+         } else {
+           break;
+         }
+         carbs_i += 1;
+      }
+
+      while(sports_i < sports.length) {
+         var sports_entry = sports[sports_i];
+         var sports_hours = hours(sports_entry[0]);
+         var sports_duration = sports_entry[1];
+         if (sports_hours < interval_end) {
+           total_sports += 1 * sports_entry[2];
+         } else {
+           break;
+         }
+         sports_i += 1;
+      }
+
+      while(mbg_i < manualbg.length) {
+         var mbg_entry = manualbg[mbg_i];
+         var mbg_hours = hours(mbg_entry[0]);
+         var mbg = mbg_entry[1];
+         if (mbg_hours < interval_end) {
+           mbg_count += 1;
+           if (mbg < 65) { mbg_lows65 += 1; }
+         } else {
+           break;
+         }
+         mbg_i += 1;
+      }
+
+
+
+      var entries_lows = 0, entries_lows65 = 0, entries_highs = 0;
+      while(entries_i < entries.length) {
+         var entries_entry = entries[entries_i];
+         var entries_hours = hours(entries_entry[0]);
+         var sgv = parseInt(entries_entry[1]);
+         if (entries_hours < interval_end) {
+           if (sgv) {
+             total_entries += sgv;
+             entries_count += 1;
+             if (sgv > 41) {  // filter out low non-working sensor...
+               if (sgv < LOW) { entries_flags += ' lo'; entries_lows += 1; }
+               if (sgv < 65) {  
+                 entries_flags += ' lo65';
+                 entries_lows65 += 1;
+               }
+             }
+             if (sgv > HIGH) { entries_flags += ' hi'; entries_highs += 1; }
+           }
+         } else {
+           break;
+         }
+         entries_i += 1;
+      }
+
+      var avg_entries = total_entries / Math.max(1, entries_count); 
+      var delta = total_insulin - basal_profile;
+
+      if (low65_flag == 1) {
+        entries_lows65 = 0;
+      } else {
+        if (entries_lows65 > 1) {
+          low65_flag = 1;
+        } else {
+          low65_flag = 0;
+        }
+      }
+      // Filter very large values.
+      if (total_insulin > 60) {
+         total_insulin = 0;
+      }
+      var basal_delta = basal - basal_profile;
+      if (basal_delta > 10) {
+          basal_delta = 0;
+      }
+      if (delta > 10) {
+          delta = 0;
+      }
+      var r = {
+        start: interval_start,
+        end: interval_end,
+        insulin: total_insulin,
+        basal: basal,  // actual basal
+        basal_profile: basal_profile,  // profile basal
+        basal_delta: basal_delta,
+        bolus: total_bolus,
+        delta: delta,
+        delta_carbs: delta * carbratio - total_carbs,
+        delta_isf: delta * isf,
+        carbs: total_carbs,
+        steps: total_sports,
+        mbg_count: mbg_count,
+        mbg_lows65: Math.min(1, mbg_lows65),
+        sgv_lows: (entries_lows > 2) ? 1 : 0,
+        sgv_highs: (entries_highs > 2) ? 1 : 0,
+        //sgv_lows65: (entries_lows65 > 2) ? 1 : 0,
+        sgv_lows65: ((avg_entries < 65) && (entries_lows65 > 2)) ? 1 : 0,
+        sgv_i: entries_count,
+        sgv_total: total_entries,
+        sgv: avg_entries,
+        sgv_flags: entries_flags 
+      };
+      if (r.sgv_lows65 == 0) { low65_flag = 0; }
+      for(var key in r) {
+        if (result[key] != null && result[key] != 'intervals') {
+          result[key] += r[key];
+        }
+      }
+      result.intervals.push(r);
+   }
+   result.sgv = result.sgv_total / Math.max(1, result.sgv_i);
+   // console.log('normalizeTreatments', result);
+   return result;
+}
+
+function decimal2(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function highlight(value) {
+  return '<span class="hl">' + value + '</span>';
+}
+function header(value) {
+  return '<span class="header">' + value + '</span>';
+}
+
+function printTreatments(result) {
+  var intervals = result.intervals;
+  var row_start = [header('Stunde')];
+  var row_total = [header('Insulin')];
+  var row_basal = [header('Basal')];
+  var row_delta = [header('ΔInsulin')];
+  var row_bolus = [header('Bolus')];
+  var row_carbs = [header('KH / g *')];
+  var row_delta_carbs = [header('ΔKH / g *')];
+  var row_delta_isf = [header('ΔBZ')];
+
+  var row_steps = [header('Schritte')];
+  var row_sgv = [header('BZ mg/dl')];
+
+  for(var i in intervals) {
+    var r = intervals[i];
+    if (r.start == '24') {
+      break;
+    }
+    row_start.push(header(r.start));
+
+    row_total.push(decimal2(r.insulin));
+
+    row_basal.push(decimal2(r.basal_profile));
+
+    row_delta.push(decimal2(r.delta));
+
+    var carbs = Math.round(r.carbs);
+
+    row_delta_isf.push(Math.round(r.delta_isf));
+
+    var delta_carbs = Math.round(r.delta_carbs);
+    if (delta_carbs > 4) {
+      row_delta_carbs.push('+' + delta_carbs)
+    } else if (delta_carbs < -4) {
+      row_delta_carbs.push(delta_carbs)
+    } else {
+      row_delta_carbs.push('')
+    }
+    if (carbs > 0) {
+      row_carbs.push(carbs);
+    } else {
+      row_carbs.push('');
+    }
+    
+    if (r.steps > 10) {
+      row_steps.push(r.steps);
+    } else {
+      row_steps.push('');
+    }
+
+    if (r.sgv > 0) {
+      row_sgv.push('<span class="' + r.sgv_flags + '">' + Math.round(r.sgv) + '</span>');
+    } else {
+      row_sgv.push('');
+    }
+  }
+  row_start.push(header('Σ'));
+  row_total.push(highlight(decimal2(result.insulin)));
+  //row_basal.push(highlight(decimal2(result.basal) + ' (' + decimal2(result.basal_profile) + ')'));
+  row_basal.push(highlight(decimal2(result.basal_profile)));
+  row_delta.push(highlight(decimal2(result.bolus)));
+  row_bolus.push(highlight(decimal2(result.bolus)));
+  row_carbs.push(highlight(Math.round(result.carbs)));
+  row_steps.push(highlight(result.steps));
+  row_sgv.push(highlight('ø' + Math.round(result.sgv)));
+
+  row_delta_carbs.push(highlight(Math.round(result.delta_carbs)));
+  row_delta_isf.push('');
+
+  var divider = '</td></tr><tr><td>'
+  var joiner = '</td><td>';
+  var cols = '<col>'.repeat(row_start.length);
+  var table = '<table>' + cols + '<tr><td>' + row_start.join(joiner) + divider + row_sgv.join(joiner) + divider + row_total.join(joiner) + divider + row_basal.join(joiner) + divider +
+              row_delta.join(joiner) + divider + row_carbs.join(joiner) + divider + row_delta_carbs.join(joiner) + divider + row_steps.join(joiner) + '</td></tr></table>';
+  summaryDiv.innerHTML = table;
+  var analysis = [
+    [result.mbg_count, ' blutige Messungen'],
+    [result.mbg_lows65, ' Hypos blutig gemessen'],
+    [result.sgv_lows65, ' Hypos vom Dexcom gemessen und behandelt'],
+    [result.sgv, ' mg/dl Durchschnittsblutzucker'],
+    [result.insulin, ' U Insulin'], 
+    [result.carbs, ' g Kohlenhydrate'], 
+    [(result.delta_carbs > 20) ? result.delta_carbs : 0, ' g vergessene Kohlenhydrate'], 
+  ].filter(function(r) { return r[0] > 0; }).map(function(r) { return Math.round(r[0]) + ' ' + r[1];});
+  resultDiv.innerHTML = analysis.join(', ');
+}
+
+function plot(start, end, rows, treatments, devicestatus, profiles, change) {
+  var profile = parseProfiles(start, end, profiles);
+  var profileDefault = profile.store.Default;
+  var profileStr = getProfileStr(profileDefault);
+
+  var changes = parseChanges(change);
+  //console.log('Changes', changes);
+
+  var entries = rows.map(function(row){return [new Date(row['date']), 1*row['sgv']];});
+  entries.sort(function(a,b){return a[0] - b[0];});
+
+  var totals = addTable(entries, treatments, devicestatus, profileStr, profileDefault, changes);
+
+  var bolus = treatments.filter(function(r){ return r['eventType'] == 'Correction Bolus'; }).map(
+    function(r){ return [new Date(r['created_at']), r['insulin']]});
+  bolus.sort(function(a,b){return a[0] - b[0];});
+  var bolusTime = [];
+  var bolusY = [];
+  var bolusText = [];
+  var lastBolusTime = 0;
+  var bolusLastY = 300;
+  for(i in bolus) {
+      var entry = bolus[i];
+      var d = entry[0];
+      var bt = hours(d);
+      bolusTime.push(bt);
+      if (((bt - lastBolusTime) < 0.5) && bolusLastY > 240) {
+        bolusLastY = bolusLastY - 30;
+      } else {
+        bolusLastY = 300;
+      }
+      bolusY.push(bolusLastY);
+      bolusText.push(entry[1]);
+      lastBolusTime = bt;
+  }
+
+  var carbs = treatments.filter(function(r){ return r['eventType'] == 'Meal Bolus'; }).map(
+    function(r){ return [new Date(r['created_at']), r['carbs']]});
+  carbs.sort(function(a,b){return a[0] - b[0];});
+  var carbTime = [];
+  var carbY = [];
+  var carbText = [];
+  var lastCarbTime = 0;
+  var lastCarbValue = 0;
+  var carbLastY = 0;
+  for(i in carbs) {
+      var entry = carbs[i];
+      var d = entry[0];
+      var ct = hours(d);
+      carbTime.push(ct);
+      if (((ct - lastCarbTime) < 0.5) && bolusLastY < 360) {
+        carbLastY = carbLastY + 32;
+      } else {
+        carbLastY = 315;
+      }
+      carbY.push(carbLastY);
+      carbText.push(entry[1]);
+      lastCarbTime = ct;
+      lastCarbValue = entry[1];
+  }
+
+  var manualbg = treatments.filter(function(r){ return r['eventType'] == 'BG Check'; }).map(
+    function(r){ return [new Date(r['created_at']), r['glucose']]});
+  manualbg.sort(function(a,b){return a[0] - b[0];});
+  var manualbgTime = [];
+  var manualbgY = [];
+  for(i in manualbg) {
+      var entry = manualbg[i];
+      var d = entry[0];
+      var ct = hours(d);
+      manualbgTime.push(ct);
+      manualbgY.push(entry[1]);
+  }
+ 
+
+  var basal_data = getBasalTrace(profileDefault);
+  var basal = treatments.filter(function(r){ return r['eventType'] == 'Temp Basal'; }).map(
+    function(r){ return [new Date(r['created_at']), r['duration'], r['absolute']]});
+  basal.sort(function(a,b){return a[0] - b[0];});
+  var basalTime = [];
+  var basalRate = [];
+  var basalRateNormal = [];
+  if (basal) {
+    var basal_day = normalizeBasalDay(basal, basal_data, 0.25);
+    for(i in basal_day) {
+      var entry = basal_day[i];
+      basalTime.push(entry[0]);  // rate
+      basalRate.push(entry[2]);  // rate + diff
+      basalRateNormal.push(entry[3]);  // rate
+    }
+  }
+
+  var sports = treatments.filter(function(r){ return r['eventType'] == 'Exercise'; }).map(
+    function(r){
+        var a = r['enteredBy'].split(" ");
+	if (!a[1]) {
+        	return [new Date(r['created_at']), r['duration'], 0];
+	}
+        var steps = 1 * a[1].split("=")[1];
+        return [new Date(r['created_at']), r['duration'], steps]
+  });
+  sports.sort(function(a,b){return a[0] - b[0];});
+  var sportsTime = [];
+  var sportsRate = [];
+  if (sports) {
+    for(i in sports) {
+      var entry = sports[i];
+      var d = entry[0];
+      var sportStart = hours(d);
+      var sportEnd = sportStart + entry[1]/60;
+      sportsTime.push(sportStart);
+      sportsTime.push(sportStart);
+      sportsTime.push(sportEnd);
+      sportsTime.push(sportEnd);
+      sportsRate.push(0);
+      sportsRate.push(entry[2]);
+      sportsRate.push(entry[2]);
+      sportsRate.push(0);
+    }
+  }
+
+  var basal_hourly_day = normalizeBasalDay(basal, basal_data, 1);
+  var normalize_day = normalizeTreatments(profileDefault, basal_hourly_day, bolus, carbs, entries, sports, manualbg);
+    
+  printTreatments(normalize_day, totals.average);
+
+
+  var minx = 0; // new Date(rows[0]['dateString']);
+  var maxx = 24; // new Date(rows[rows.length - 1]['dateString']);
+  var trace = {
+    name: 'BG',
+    type: 'scatter',
+    mode: 'markers',
+    x: entries.map(function(e){return hours(e[0]);}),
+    y: entries.map(function(e){return e[1];}),
+    line: { width: 0 },
+    marker: { size: 4, color: 'black', opacity: 1 },
+  };
+  var trace_high = {
+    name: 'High',
+    showlegend: false,
+    type: 'scatter',
+    mode: 'lines',
+    x: [minx, maxx],
+    y: [HIGH, HIGH],
+    line: { width: 1.5, color: 'red', opacity: 0.7 },
+  };
+  var trace_lo = {
+    name: 'Low',
+    showlegend: false,
+    type: 'scatter',
+    mode: 'lines',
+    x: [minx, maxx],
+    y: [LOW, LOW],
+    line: { width: 1.5, color: 'red', opacity: 0.7 },
+  };
+
+  var trace_carbs = {
+    name: 'Carbs',
+    type: 'scatter',
+    mode: 'markers+text',
+    x: carbTime,
+    y: carbY,
+    marker: { color: 'green', size: 8 },
+    text: carbText,
+    textposition: 'top center',
+    textfont: {
+      size: 10,
+    }
+  };
+
+  var trace_bolus = {
+    name: 'Bolus',
+    type: 'scatter',
+    mode: 'markers+text',
+    x: bolusTime,
+    y: bolusY,
+    marker: { color: 'orange', size: 8 },
+    text: bolusText,
+    textposition: 'bottom center',
+    textfont: {
+      size: 10,
+    }
+  };
+
+  var trace_manualbg = {
+    name: 'BG Check',
+    type: 'scatter',
+    mode: 'markers',
+    x: manualbgTime,
+    y: manualbgY,
+    marker: { color: 'red', size: 8, symbol: 'diamond' },
+  };
+
+
+
+  var trace_sports = {
+    name: 'Activity',
+    type: 'scatter',
+    mode: 'lines',
+    fill: 'tozeroy',
+    fillcolor: 'rgba(255, 0, 0, 0.1)',
+    x: sportsTime,
+    y: sportsRate,
+    line: { width: 0, color: '#FFB6C1', shape: 'vh'},
+    yaxis: 'y2',
+   };
+
+  // end top graph
+  
+
+  var trace_basal = {
+    name: 'Basal',
+    type: 'scatter',
+    mode: 'lines',
+    fill: 'tozeroy',
+    fillcolor: 'rgba(0, 0, 255, 0.7)',
+    x: basalTime,
+    y: basalRate,
+    line: { width: 0.5, color: 'blue', shape: 'hv' },
+    yaxis: 'y3',
+    xaxis: 'x3'
+   };
+
+  var trace_basal_normal = {
+    name: 'Basal',
+    type: 'scatter',
+    mode: 'lines',
+    fill: 'tozeroy',
+    fillcolor: 'rgba(0, 0, 255, 0.2)',
+    x: basalTime,
+    y: basalRateNormal,
+    line: { width: 1.5, color: 'black', shape: 'hv', dash: 'dash' },
+    yaxis: 'y3',
+    xaxis: 'x3'
+   };
+
+
+
+  var trace_iob = getDeviceStatusTrace(devicestatus, 'iob', 'x4', 'y4', 'orange');
+  var trace_cob = getDeviceStatusTrace(devicestatus, 'cob', 'x5', 'y5', '#00FF00');
+  
+  var dow = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+  var xticks = [0, 3, 6, 9, 12, 15, 18, 21, 24];
+  var s = dow[day.getDay()] + ", " + formatDay(day);
+  var traces = [trace, trace_lo, trace_high, trace_carbs, trace_bolus, trace_manualbg, trace_basal_normal, trace_basal, trace_sports];
+  var domains = {
+      main: [0, 0.7],
+      basal: [0.75, 0.95],
+      iob: [0.95, 0.96],
+      cob: [0.95, 0.96],
+    };
+  if (options.indexOf('CIOB') >= 0) {
+    domains = {
+      main: [0, 0.5],
+      basal: [0.55, 0.65],
+      iob: [0.7, 0.8],
+      cob: [0.85, 0.95],
+    };
+    traces.push(trace_iob);
+    traces.push(trace_cob);
+  }
+  var layout = {
+    title: "@ " + s,
+    yaxis: {
+      domain: domains.main,
+      title: "BG (mg/dl)",
+      range: [0, 410],
+      tickvals: [50, 100, 150, 200, 250, 300, 350],
+    },
+
+    yaxis2: {
+      domain: domains.main,
+      //title: "Sport",
+      titlefont: {color: 'green'},
+      ticfont: {color: 'green'},
+      range: [0, 2000],
+      tickvals: [],
+      overlaying: 'y',
+      side: 'right',
+      anchor: 'free',
+      position: 2,
+    },
+
+    yaxis3: {
+      domain: domains.basal,
+      title: "Basal",
+      ticktext: ['0', '', '0.5', '', '1'],
+      tickvals: [0, 0.25, 0.5, 0.75, 1],
+      range: [0, 1],
+    },
+    xaxis: {
+      domain: [0, 1],
+      //title: "Stunde",
+      // title: totals.bolus + ' U Bolus (' + totals.bolusNumber + 'x), ' + totals.insulin + ' U Tag, ' + totals.carbs + ' g KH (' + totals.meals + 'x), ' + totals.steps + ' Schritte, ' + totals.low_percent + '% hypo, ' + totals.high_percent + '% hyper, ø' + totals.average + ' mg/dl',
+      showgrid: true,
+      tickvals: xticks,
+      range: [0, 24],
+    },
+    xaxis3: {
+      domain: [0, 1],
+      anchor: 'y3',
+      showgrid: true,
+      tickvals: xticks,
+      showticklabels: false,
+      range: [0, 24],
+    }, //basal
+        margin: {
+     t: 30,
+     r: 20,
+     l: 45,
+     b: 25,
+    },
+    showlegend: false,
+  };
+  if (options.indexOf('CIOB') >= 0) {
+    layout.yaxis4 = {
+      domain: domains.iob,
+      title: "IOB",
+      ticktext: ['0', '', '2', '', '4', ''],
+      tickvals: [0, 1, 2, 3, 4, 5],
+      range: [-1, 5],
+    };
+    layout.yaxis5 = {
+      domain: domains.cob,
+      title: "COB",
+      ticktext: ['0', '', '40', '', '80'],
+      tickvals: [0, 20, 40, 60, 80],
+      range: [0, 80],
+    };
+    layout.xaxis4 = {
+      domain: [0, 1],
+      anchor: 'y4',
+      showgrid: true,
+      tickvals: xticks,
+      showticklabels: false,
+      range: [0, 24],
+    }; //iob
+    layout.xaxis5 = {
+      domain: [0, 1],
+      anchor: 'y5',
+      showgrid: true,
+      tickvals: xticks,
+      showticklabels: false,
+      range: [0, 24],
+    }; //cob
+  }
+  Plotly.plot(graphDiv, traces, layout, {showLink: false, staticPlot: true});
+  return normalize_day;
+}
+
+  var entriesUrl = '/api/v1/entries.json?find[date][$gte]=' + startTime.getTime() + '&find[date][$lte]=' + endTime.getTime() + '&count=10000';
+  var createdAt = 'find[created_at][$gte]=' + start + '&find[created_at][$lte]=' + end + '&count=10000';
+  var changeUrl = 'find[eventType][$regex]=^(Sensor|Insulin|Site) Change&find[created_at][$lte]=' + start + '&count=20';
+  
+  var urls = {
+        entries: entriesUrl,
+	change: '/api/v1/treatments.json?' + changeUrl,
+	treatments: '/api/v1/treatments.json?' + createdAt,
+	profile: '/api/v1/profile.json',
+	devicestatus: '/api/v1/devicestatus.json?' + createdAt,
+  };
+  var results = {};
+  for(var name in urls) {
+        var load = function(url, name) {
+  	  Plotly.d3.json(NSURL + urls[name], function(rows) {
+  //         console.log('name', name);
+           results[name] = rows;
+           if (Object.keys(urls).length == Object.keys(results).length) {
+             //console.log(urls, results);
+             var stats = plot(start, end, results.entries, results.treatments, results.devicestatus, results.profile, results.change);
+             stats.day = start;
+             global_stats.push(stats);
+           } else {
+            //console.log('len', name, Object.keys(urls).length, Object.keys(results).length);
+           }
+  	  });
+        };
+        load(urls[name], name);
+  }
+
+
+}
+
+function run() {
+  var nsurl = getParameterByName("ns");
+  var opt = getParameterByName("opt");
+  var showOptions = (opt != null) ? opt.split(',') : [];
+  if (!nsurl) {
+    nsurl = window.location.hostname;
+    //alert("Need to set ns= url parameter");
+    //return;
+  }
+  NSURL = "https://" + nsurl;
+  var start = new Date();
+  var startStr = getParameterByName("start");
+  if (!startStr) {
+    start.setTime(start.getTime() - 86400 * 1000);
+  } else {
+    start = new Date(startStr);
+  }
+  // force local time
+  startStr = start.toDateString();
+  start = new Date(startStr);
+  var originalstart = start;  
+
+  var end = start;
+  var endStr = getParameterByName("end");
+  if (endStr) {
+    end = new Date(endStr);
+  }
+  console.log('parms', startStr, start, endStr, end);
+  var days = 0;
+  var stats = [];
+  while(start <= end) {
+    console.log('Plotting', start);
+    printDay(start, showOptions);
+    start = new Date(start.getTime() + 86400 * 1000);
+    days += 1;
+  }
+  if (days == 1) {
+    var yesterday = new Date()
+    yesterday.setTime(originalstart.getTime() - 86400 * 1000);
+    var tomorrow = new Date()
+    tomorrow.setTime(originalstart.getTime() + 86400 * 1000);
+    console.log(yesterday, start, tomorrow);
+    var baseurl = '/journal/?opt=' + opt + '&start=';
+    var linkyesterday = baseurl + yesterday.toDateString()
+    var linktomorrow = baseurl + tomorrow.toDateString()
+    var nav = document.getElementById("nav");
+    nav.innerHTML = '<a href="' + linkyesterday + '">Previous</a> ';
+    nav.innerHTML += '<a href="' + linktomorrow + '">Next</a>';
+  }
+  var maybePlotStats = function() {
+    if (days == global_stats.length) {
+      printStats(global_stats, originalstart, end);
+    } else {
+      setTimeout(maybePlotStats, 500);
+    }
+  };
+  maybePlotStats();
+}
+run();
+
+window.onresize = function() {
+    var bodyDiv = document.getElementsByTagName('body')[0];
+    var graphs = bodyDiv.getElementsByClassName('graph');
+    for(i in graphs) {
+      Plotly.Plots.resize(graphs[i]);
+    }
+    graphs = bodyDiv.getElementsByClassName('graphstats');
+    for(i in graphs) {
+      Plotly.Plots.resize(graphs[i]);
+    }
+};
+
+  </script>
+</body>
+</html>
