@@ -1,36 +1,18 @@
-FROM node:10.20-alpine
+FROM node:14.15.3-alpine
 
-MAINTAINER Nightscout Contributors, Erik Dilemma <erik.dilemma@gmail.com>
-#
-# Build: docker build -t trixing/nightscout .
-# Run: docker run -p 1337:1337 trixing/nightscout
-
-EXPOSE 1337
-
-#RUN apt-get update && \
-#  apt-get -y dist-upgrade
-
-RUN apk update && apk upgrade && \
-    apk add --no-cache bash git openssh python build-base
+LABEL maintainer="Nightscout Contributors"
 
 RUN mkdir -p /opt/app
 ADD . /opt/app
 WORKDIR /opt/app
-COPY package.json package-clock.json* ./
-RUN npm config set unsafe-perm true
-RUN npm i npm@latest -g
+RUN chown -R node:node /opt/app
+USER node
+
 RUN npm install && \
-    npm cache clean --force
+  npm run postinstall && \
+  npm run env && \
+  npm audit fix
 
-#ENV PATH /opt/node_modules/.bin/:$PATH
-
-#ADD . /opt/app
-#WORKDIR /opt/app
-#RUN ln -s /opt/node_modules /opt/app/node_modules
-
-RUN  npm run postinstall && \
-     npm run env && \
-     npm audit fix
-
+EXPOSE 1337
 
 CMD ["node", "server.js"]
