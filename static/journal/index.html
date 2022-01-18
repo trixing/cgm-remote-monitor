@@ -502,6 +502,8 @@ function addTable(entries, treatments, devicestatus, profileStr, profileDefault,
       tag = 'meal';
     } else if (et.startsWith('Debug.')) {
       return
+    } else if (et.startsWith('Log.')) {
+      return
     } else if (et == 'Note') {
       what = 'Notiz';
       value = row['notes'];
